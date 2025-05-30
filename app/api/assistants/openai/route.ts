@@ -1,32 +1,55 @@
-import { checkApiKey, getServerProfile } from "@/lib/server/server-chat-helpers"
-import { ServerRuntime } from "next"
-import OpenAI from "openai"
+// app/api/chat.ts
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
 
-export const runtime: ServerRuntime = "edge"
+// ─── 0. tiny helpers ─────────────────────────────────────────────────
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-export async function GET() {
-  try {
-    const profile = await getServerProfile()
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
-    checkApiKey(profile.openai_api_key, "OpenAI")
+// ─── 1. entrypoint ──────────────────────────────────────────────────
+export async function POST(req: NextRequest) {
+  const { question } = await req.json();        // expects {question:"…"}
 
-    const openai = new OpenAI({
-      apiKey: profile.openai_api_key || "",
-      organization: profile.openai_organization_id
-    })
+  /* 2. ask Supabase for the 8 most similar chunks */
+  const { data: chunks, error } = await supabase.rpc('match_documents', {
+    query_text: question,
+    match_count: 8
+  });
 
-    const myAssistants = await openai.beta.assistants.list({
-      limit: 100
-    })
-
-    return new Response(JSON.stringify({ assistants: myAssistants.data }), {
-      status: 200
-    })
-  } catch (error: any) {
-    const errorMessage = error.error?.message || "An unexpected error occurred"
-    const errorCode = error.status || 500
-    return new Response(JSON.stringify({ message: errorMessage }), {
-      status: errorCode
-    })
+  if (error) {
+    console.error(error);
+    return NextResponse.json({ error: 'Search failed' }, { status: 500 });
   }
+
+  /* 3. stitch those chunks into a “context” string  */
+  const context = chunks.map((c: any) => c.content).join('\n---\n');
+
+  /* 4. ask GPT-4o, streaming back to the client  */
+  const stream = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    stream: true,                     // ≤-- important for Chatbot-UI console
+    messages: [
+      {
+        role: 'system',
+        content: `
+You are Duub, an insider guide to Dubai.
+Answer in an upbeat, concise style. Cite concrete places or laws when useful.
+If the user asks something outside your knowledge, say you’re unsure.
+Here is background you can use:\n${context}`
+      },
+      { role: 'user', content: question }
+    ]
+  });
+
+  return new NextResponse(stream as any, {
+    headers: { 'Content-Type': 'text/event-stream' }      // enables SSE
+  });
 }
