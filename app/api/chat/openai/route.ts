@@ -1,58 +1,53 @@
-import { checkApiKey, getServerProfile } from "@/lib/server/server-chat-helpers"
-import { ChatSettings } from "@/types"
-import { OpenAIStream, StreamingTextResponse } from "ai"
-import { ServerRuntime } from "next"
-import OpenAI from "openai"
-import { ChatCompletionCreateParamsBase } from "openai/resources/chat/completions.mjs"
+// app/api/chat/openai/route.ts
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
 
-export const runtime: ServerRuntime = "edge"
+/* ── 0. clients ─────────────────────────────────────────────── */
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-export async function POST(request: Request) {
-  const json = await request.json()
-  const { chatSettings, messages } = json as {
-    chatSettings: ChatSettings
-    messages: any[]
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!
+});
+
+/* ── 1. POST /api/chat/openai ───────────────────────────────── */
+export async function POST(req: Request) {
+  const { question } = await req.json();          // { question: "..." }
+
+  /* 2. top-K retrieval from Supabase */
+  const { data: chunks, error } = await supabase.rpc('match_documents', {
+    query_text: question,
+    match_count: 8
+  });
+  if (error) {
+    console.error(error);
+    return NextResponse.json({ error: 'Search failed' }, { status: 500 });
   }
 
-  try {
-    const profile = await getServerProfile()
+  /* 3. fuse chunks into one context string */
+  const context = chunks.map((c: any) => c.content).join('\n---\n');
 
-    checkApiKey(profile.openai_api_key, "OpenAI")
+  /* 4. call GPT-4o and stream back */
+  const stream = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    stream: true,
+    messages: [
+      {
+        role: 'system',
+        content: `
+You are Duub, a friendly inside guide to Dubai.
+Use or quote the background below when helpful.
+If unsure, ask follow-up questions.
+Background:\n${context}`
+      },
+      { role: 'user', content: question }
+    ]
+  });
 
-    const openai = new OpenAI({
-      apiKey: profile.openai_api_key || "",
-      organization: profile.openai_organization_id
-    })
-
-    const response = await openai.chat.completions.create({
-      model: chatSettings.model as ChatCompletionCreateParamsBase["model"],
-      messages: messages as ChatCompletionCreateParamsBase["messages"],
-      temperature: chatSettings.temperature,
-      max_tokens:
-        chatSettings.model === "gpt-4-vision-preview" ||
-        chatSettings.model === "gpt-4o"
-          ? 4096
-          : null, // TODO: Fix
-      stream: true
-    })
-
-    const stream = OpenAIStream(response)
-
-    return new StreamingTextResponse(stream)
-  } catch (error: any) {
-    let errorMessage = error.message || "An unexpected error occurred"
-    const errorCode = error.status || 500
-
-    if (errorMessage.toLowerCase().includes("api key not found")) {
-      errorMessage =
-        "OpenAI API Key not found. Please set it in your profile settings."
-    } else if (errorMessage.toLowerCase().includes("incorrect api key")) {
-      errorMessage =
-        "OpenAI API Key is incorrect. Please fix it in your profile settings."
-    }
-
-    return new Response(JSON.stringify({ message: errorMessage }), {
-      status: errorCode
-    })
-  }
+  return new NextResponse(stream as any, {
+    headers: { 'Content-Type': 'text/event-stream' }
+  });
 }
