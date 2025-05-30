@@ -1,28 +1,8 @@
-"use client"
+import { ReactNode } from "react";
 
-import { ChatbotUISVG } from "@/components/icons/chatbotui-svg"
-import { IconArrowRight } from "@tabler/icons-react"
-import { useTheme } from "next-themes"
-import Link from "next/link"
+// disable static prerender for this route
+export const dynamic = "force-dynamic";
 
-export default function HomePage() {
-  const { theme } = useTheme()
-
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center">
-      <div>
-        <ChatbotUISVG theme={theme === "dark" ? "dark" : "light"} scale={0.3} />
-      </div>
-
-      <div className="mt-2 text-4xl font-bold">Duub.ai</div>
-
-      <Link
-        href="/chat"
-        className="mt-4 flex w-[200px] items-center justify-center rounded-md bg-blue-500 p-2 font-semibold text-white"
-      >
-        Start Chatting
-        <IconArrowRight className="ml-1" size={20} />
-      </Link>
-    </div>
-  )
+export default function ChatLayout({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }
