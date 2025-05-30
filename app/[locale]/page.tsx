@@ -17,8 +17,8 @@ export default function HomePage() {
       <div className="mt-2 text-4xl font-bold">Chatbot UI</div>
 
       <Link
+        href="/en/YOUR_WORKSPACE_ID/chat"
         className="mt-4 flex w-[200px] items-center justify-center rounded-md bg-blue-500 p-2 font-semibold"
-        href="/login"
       >
         Start Chatting
         <IconArrowRight className="ml-1" size={20} />
